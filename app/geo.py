@@ -25,6 +25,8 @@ def place_center(place_id: str | None) -> tuple[float, float] | None:
     place = lookup_place(place_id)
     if not place:
         return None
+    if place.get("lat") is not None and place.get("lon") is not None:
+        return (float(place["lat"]), float(place["lon"]))
     min_lat, min_lon, max_lat, max_lon = place["bbox"]
     return ((min_lat + max_lat) / 2, (min_lon + max_lon) / 2)
 
@@ -34,9 +36,12 @@ def nearest_place_ids(lat: float, lon: float, limit: int = 4) -> list[str]:
     for place_id, meta in PLACES.items():
         if place_id == "japan":
             continue
-        min_lat, min_lon, max_lat, max_lon = meta["bbox"]
-        clat = (min_lat + max_lat) / 2
-        clon = (min_lon + max_lon) / 2
+        if meta.get("lat") is not None and meta.get("lon") is not None:
+            clat, clon = float(meta["lat"]), float(meta["lon"])
+        else:
+            min_lat, min_lon, max_lat, max_lon = meta["bbox"]
+            clat = (min_lat + max_lat) / 2
+            clon = (min_lon + max_lon) / 2
         ranked.append((nm_between(lat, lon, clat, clon), place_id))
     ranked.sort(key=lambda item: item[0])
     return [place_id for _, place_id in ranked[:limit]]
@@ -51,9 +56,10 @@ def place_on_segment(origin_id: str, dest_id: str) -> str | None:
     for place_id, meta in PLACES.items():
         if place_id in {origin_id, dest_id, "japan"}:
             continue
-        min_lat, min_lon, max_lat, max_lon = meta["bbox"]
-        lat = (min_lat + max_lat) / 2
-        lon = (min_lon + max_lon) / 2
+        center = place_center(place_id)
+        if center is None:
+            continue
+        lat, lon = center
         via = nm_between(origin[0], origin[1], lat, lon) + nm_between(lat, lon, dest[0], dest[1])
         direct = nm_between(origin[0], origin[1], dest[0], dest[1])
         extra = via - direct

@@ -30,7 +30,21 @@ def sea_polyline(waypoints: list[tuple[float, float]]) -> dict[str, Any]:
             segment = segment[1:]
         path.extend(segment)
         total += length
+    if cleaned:
+        path = _pin_ends(path, cleaned[0], cleaned[-1])
     return {"path": path, "nm": round(total, 1), "source": source}
+
+
+def _pin_ends(path: list[list[float]], start: tuple[float, float], end: tuple[float, float]) -> list[list[float]]:
+    lat1, lon1 = start
+    lat2, lon2 = end
+    if not path:
+        return [[lat1, lon1], [lat2, lon2]]
+    if nm_between(path[0][0], path[0][1], lat1, lon1) > 0.05:
+        path = [[lat1, lon1], *path]
+    if nm_between(path[-1][0], path[-1][1], lat2, lon2) > 0.05:
+        path = [*path, [lat2, lon2]]
+    return path
 
 
 @lru_cache(maxsize=512)
@@ -43,7 +57,7 @@ def _segment(start: tuple[float, float], end: tuple[float, float]) -> tuple[list
         path = [[float(lat), float(lon)] for lon, lat in coords]
         length = float(feature.get("properties", {}).get("length") or 0.0)
         if len(path) >= 2:
-            return path, length, "searoute"
+            return _pin_ends(path, start, end), length, "searoute"
     except Exception:
         pass
     return [[lat1, lon1], [lat2, lon2]], nm_between(lat1, lon1, lat2, lon2), "straight"
