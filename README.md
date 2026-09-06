@@ -35,6 +35,16 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 ブラウザで http://127.0.0.1:8000 を開きます。
 
+## GitHub で公開
+
+ローカルにコミット済みです。GitHub CLI でログインしたあと、公開リポジトリを作れます。
+
+```bash
+cd ~/Desktop/kaiun-map
+gh auth login
+gh repo create kaiun-map --public --source=. --remote=origin --push
+```
+
 ## アーキテクチャ
 
 ブラウザ（Leaflet） → FastAPI（REST + WebSocket） → AISStream / OpenAI。船の最新状態は MMSI 単位のメモリキャッシュです。全世界の常時購読はしません。
