@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from app.geo import places_payload
+from app.geo import place_center, places_payload
 from app.places import lookup_place
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "projects.json"
@@ -59,7 +59,7 @@ class ProjectStore:
         with self._lock:
             for project in self._read()["projects"]:
                 if project["id"] == project_id and project.get("user_id") == user_id:
-                    return project
+                    return _refresh_project_places(project)
         return None
 
     def create(self, user_id: str, name: str, notes: str = "") -> dict[str, Any]:
@@ -197,14 +197,8 @@ def _normalize_ship(fields: dict[str, Any], ship_id: str | None = None) -> dict[
             raise ValueError("寄港地がカタログにありません。")
     origin = lookup_place(origin_id)
     dest = lookup_place(dest_id)
-    origin_pt = None
-    dest_pt = None
-    if origin:
-        min_lat, min_lon, max_lat, max_lon = origin["bbox"]
-        origin_pt = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
-    if dest:
-        min_lat, min_lon, max_lat, max_lon = dest["bbox"]
-        dest_pt = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
+    origin_pt = place_center(origin_id)
+    dest_pt = place_center(dest_id)
     transship_places = places_payload(transship_ids)
     call_places = places_payload(call_ids)
     return {
@@ -228,6 +222,31 @@ def _normalize_ship(fields: dict[str, Any], ship_id: str | None = None) -> dict[
         "planned_arrival_at": str(fields.get("planned_arrival_at") or "").strip() or None,
         "planned_departure_at": str(fields.get("planned_departure_at") or "").strip() or None,
         "updated_at": _now(),
+    }
+
+
+def _refresh_project_places(project: dict[str, Any]) -> dict[str, Any]:
+    ships = [_refresh_ship_places(ship) for ship in project.get("ships") or []]
+    return {**project, "ships": ships}
+
+
+def _refresh_ship_places(ship: dict[str, Any]) -> dict[str, Any]:
+    origin_id = ship.get("origin_place_id")
+    dest_id = ship.get("dest_place_id")
+    origin = lookup_place(origin_id)
+    dest = lookup_place(dest_id)
+    origin_pt = place_center(origin_id)
+    dest_pt = place_center(dest_id)
+    return {
+        **ship,
+        "origin_name": origin["name"] if origin else ship.get("origin_name"),
+        "origin_lat": origin_pt[0] if origin_pt else None,
+        "origin_lon": origin_pt[1] if origin_pt else None,
+        "dest_name": dest["name"] if dest else ship.get("dest_name"),
+        "dest_lat": dest_pt[0] if dest_pt else None,
+        "dest_lon": dest_pt[1] if dest_pt else None,
+        "transship_places": places_payload(ship.get("transship_place_ids") or []),
+        "call_places": places_payload(ship.get("call_place_ids") or []),
     }
 
 

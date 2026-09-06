@@ -457,6 +457,19 @@ function blPoints(ship) {
   return points;
 }
 
+function sameCoord(a, b) {
+  return Math.abs(a[0] - b[0]) < 1e-5 && Math.abs(a[1] - b[1]) < 1e-5;
+}
+
+function pinPathToPoints(path, points) {
+  const start = [points[0].lat, points[0].lon];
+  const end = [points[points.length - 1].lat, points[points.length - 1].lon];
+  const out = Array.isArray(path) ? path.slice() : [];
+  if (!out.length || !sameCoord(out[0], start)) out.unshift(start);
+  if (!sameCoord(out[out.length - 1], end)) out.push(end);
+  return out;
+}
+
 async function fetchSeaPath(points) {
   const usable = (points || []).filter((p) => p && p.lat != null && p.lon != null);
   if (usable.length < 2) return usable.map((p) => [p.lat, p.lon]);
@@ -470,8 +483,9 @@ async function fetchSeaPath(points) {
     });
     const data = await res.json();
     const path = data.path && data.path.length >= 2 ? data.path : usable.map((p) => [p.lat, p.lon]);
-    seaRouteCache.set(key, path);
-    return path;
+    const pinned = pinPathToPoints(path, usable);
+    seaRouteCache.set(key, pinned);
+    return pinned;
   } catch {
     const fallback = usable.map((p) => [p.lat, p.lon]);
     seaRouteCache.set(key, fallback);

@@ -4,7 +4,7 @@ import uuid
 from threading import Lock
 from typing import Any
 
-from app.projects import _now, _normalize_ship, _same_ship
+from app.projects import _now, _normalize_ship, _refresh_project_places, _same_ship
 
 
 class GuestProjectStore:
@@ -40,7 +40,8 @@ class GuestProjectStore:
 
     def get(self, project_id: str, guest_id: str) -> dict[str, Any] | None:
         with self._lock:
-            return next((p for p in self._bucket(guest_id) if p["id"] == project_id), None)
+            found = next((p for p in self._bucket(guest_id) if p["id"] == project_id), None)
+        return _refresh_project_places(found) if found else None
 
     def create(self, guest_id: str, name: str, notes: str = "") -> dict[str, Any]:
         cleaned = name.strip()

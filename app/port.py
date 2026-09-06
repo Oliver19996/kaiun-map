@@ -3,18 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.geo import place_center
 from app.places import PLACES, lookup_place
 
 IN_PORT_SOG = 0.5
 UNDERWAY_SOG = 1.0
-
-
-def place_center(place_id: str | None) -> tuple[float, float] | None:
-    place = lookup_place(place_id)
-    if not place:
-        return None
-    min_lat, min_lon, max_lat, max_lon = place["bbox"]
-    return ((min_lat + max_lat) / 2, (min_lon + max_lon) / 2)
 
 
 def containing_place(lat: float | None, lon: float | None) -> dict[str, Any] | None:
