@@ -13,10 +13,49 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
+    <div class="map-wrap">
+      <div id="map"></div>
+      <div id="map-legend">
+        <span><i class="leg here"></i>現在位置</span>
+        <span><i class="leg load"></i>船積（B/L）</span>
+        <span><i class="leg trans"></i>積み替え（B/L）</span>
+        <span><i class="leg call"></i>寄港（B/L外）</span>
+        <span><i class="leg disc"></i>船卸（B/L）</span>
+      </div>
+    </div>
+    <section id="chat-dock">
+      <h2>AI チャット</h2>
+      <p class="hint">役割に応じた裏プロンプトと、アップロードした B/L 等の抜粋を使って詳しく答えます。地図上の船を選ぶと現在位置・B/L港・寄港地も前提になります。</p>
+      <div class="chat-tools">
+        <label class="field">あなたの属性
+          <select id="chat-role"></select>
+        </label>
+        <label class="field">会社・部署（任意）
+          <input id="chat-company" maxlength="80" placeholder="例: ○○海運 運航部" />
+        </label>
+        <label class="field">B/L・関連資料
+          <input id="chat-doc" type="file" accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain" />
+        </label>
+      </div>
+      <ul id="chat-docs" class="chat-docs"></ul>
+      <div id="chat-log"></div>
+      <div class="chat-examples">
+        <button type="button" class="ghost chat-ex" data-q="船積港と船卸港のいまの天気を教えて">船積・船卸港の天気</button>
+        <button type="button" class="ghost chat-ex" data-q="次の目的地までの推定所要時間は？">次地点までの所要時間</button>
+        <button type="button" class="ghost chat-ex" data-q="予告着港時間からどれだけ遅れている？">予告着港からの遅れ</button>
+        <button type="button" class="ghost chat-ex" data-q="アップロードした資料から、船積港・船卸港・荷受人を抜粋して、いまのAIS位置との関係を整理して">資料と船位の整理</button>
+      </div>
+      <div class="row">
+        <input id="chat-input" type="text" placeholder="聞きたいことを入力" />
+        <button id="chat-send" type="button">送信</button>
+      </div>
+    </section>
     <aside class="panel">
       <header>
-        <p class="kicker">Japan &amp; world shipping</p>
-        <h1>kaiun-map</h1>
+        <div>
+          <p class="kicker">Japan &amp; world shipping</p>
+          <h1>kaiun-map</h1>
+        </div>
         <p class="lede">
           地図に映っている範囲の AIS をほぼリアルタイムで表示します。欠測や遅延があり、公式の運航情報ではありません。
         </p>
@@ -91,63 +130,29 @@
         </div>
       </section>
 
-      <label class="field">
-        船名 / MMSI / 呼出符号
-        <div class="row">
-          <input id="search" type="search" placeholder="例: 432870000 または船名" />
-          <button id="search-btn" type="button">検索</button>
-        </div>
-      </label>
-      <ul id="results" class="results"></ul>
+      <section class="search-box">
+        <h2>船の検索</h2>
+        <label class="field">
+          船名 / MMSI / 呼出符号
+          <div class="row">
+            <input id="search" type="search" placeholder="例: 432870000 または船名" />
+            <button id="search-btn" type="button">検索</button>
+          </div>
+        </label>
+        <ul id="results" class="results"></ul>
 
-      <section class="brief" hidden id="brief-box">
-        <h2>選択中の船</h2>
-        <div id="selected-meta"></div>
-        <button id="brief-btn" type="button">この船を解説</button>
-        <div id="brief-out"></div>
+        <section class="brief" hidden id="brief-box">
+          <h2>選択中の船</h2>
+          <div id="selected-meta"></div>
+          <button id="brief-btn" type="button">この船を解説</button>
+          <div id="brief-out"></div>
+        </section>
       </section>
 
       <footer>
         位置情報は AISStream。広域地図は Esri Ocean、拡大時は OpenStreetMap。天気は Open-Meteo。海上航路は可視化用で、公式の航海援助ではありません。
       </footer>
     </aside>
-    <div class="map-wrap">
-      <div id="map"></div>
-      <div id="map-legend">
-        <span><i class="leg here"></i>現在位置</span>
-        <span><i class="leg load"></i>船積（B/L）</span>
-        <span><i class="leg trans"></i>積み替え（B/L）</span>
-        <span><i class="leg call"></i>寄港（B/L外）</span>
-        <span><i class="leg disc"></i>船卸（B/L）</span>
-      </div>
-    </div>
-    <section id="chat-dock">
-      <h2>AI チャット</h2>
-      <p class="hint">役割に応じた裏プロンプトと、アップロードした B/L 等の抜粋を使って詳しく答えます。地図上の船を選ぶと現在位置・B/L港・寄港地も前提になります。</p>
-      <div class="chat-tools">
-        <label class="field">あなたの属性
-          <select id="chat-role"></select>
-        </label>
-        <label class="field">会社・部署（任意）
-          <input id="chat-company" maxlength="80" placeholder="例: ○○海運 運航部" />
-        </label>
-        <label class="field">B/L・関連資料
-          <input id="chat-doc" type="file" accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain" />
-        </label>
-      </div>
-      <ul id="chat-docs" class="chat-docs"></ul>
-      <div id="chat-log"></div>
-      <div class="chat-examples">
-        <button type="button" class="ghost chat-ex" data-q="船積港と船卸港のいまの天気を教えて">船積・船卸港の天気</button>
-        <button type="button" class="ghost chat-ex" data-q="次の目的地までの推定所要時間は？">次地点までの所要時間</button>
-        <button type="button" class="ghost chat-ex" data-q="予告着港時間からどれだけ遅れている？">予告着港からの遅れ</button>
-        <button type="button" class="ghost chat-ex" data-q="アップロードした資料から、船積港・船卸港・荷受人を抜粋して、いまのAIS位置との関係を整理して">資料と船位の整理</button>
-      </div>
-      <div class="row">
-        <input id="chat-input" type="text" placeholder="聞きたいことを入力" />
-        <button id="chat-send" type="button">送信</button>
-      </div>
-    </section>
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
