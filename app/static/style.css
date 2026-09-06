@@ -70,6 +70,73 @@ footer,
   font-size: 0.85rem;
 }
 
+.project-box {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #07141d;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.row.compact {
+  justify-content: flex-start;
+}
+
+.fleet-list {
+  max-height: 180px;
+}
+
+.fleet-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.fleet-list .meta {
+  flex: 1;
+}
+
+.fleet-list .remove {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 0;
+  font-weight: 600;
+}
+
+.ship-icon.in-project {
+  border-bottom-color: #7ab8ff;
+}
+
+.ship-icon.in-project.selected {
+  border-bottom-color: #ffd36a;
+}
+
 .field {
   display: flex;
   flex-direction: column;

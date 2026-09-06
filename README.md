@@ -8,6 +8,7 @@
 
 ## できること
 
+- プロジェクトを作って船名・呼出符号・MMSI をまとめ、選択したプロジェクトの船だけを地図上で管理
 - いま見えている地図範囲の船をマーカー表示（ズームアウト時は範囲をクリップ）
 - 船名 / MMSI / 呼出符号の検索（サーバが保持しているキャッシュ内）
 - 「大阪湾のタンカー」などの自然言語検索（地名はサーバ側カタログのみ。座標の捏造はしない）
@@ -35,15 +36,20 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 ブラウザで http://127.0.0.1:8000 を開きます。
 
-## GitHub で公開
+コードは https://github.com/Oliver19996/kaiun-map にあります。`.env` はコミットしません。
 
-ローカルにコミット済みです。GitHub CLI でログインしたあと、公開リポジトリを作れます。
+## 外部公開（インターネットから触れるようにする）
 
-```bash
-cd ~/Desktop/kaiun-map
-gh auth login
-gh repo create kaiun-map --public --source=. --remote=origin --push
-```
+AIS は常時 WebSocket、プロジェクト名簿はサーバ上の `data/projects.json` です。無料の PaaS なら **Render** か **Railway** が扱いやすいです。手順の概要は次のとおりです。
+
+1. [AISStream](https://aisstream.io/) と [OpenAI](https://platform.openai.com/) のキーを用意する（GitHub やチャットに貼らない）。
+2. リポジトリ https://github.com/Oliver19996/kaiun-map を Render / Railway / Fly.io に接続する。
+3. 起動コマンドは `uvicorn app.main:app --host 0.0.0.0 --port $PORT`（`Procfile` 済み）。
+4. 環境変数に `AISSTREAM_API_KEY` と `OPENAI_API_KEY` を入れる。任意で `OPENAI_MODEL`。
+5. ディスクを永続化できるなら `data/` をマウントする。しないと再起動でプロジェクトが消えます。
+6. HTTPS の URL が付いたら、ブラウザで開き、左のプロジェクトから船団を選べます。
+
+注意: 公式の航海援助ではありません。AISStream・地図タイル・OpenAI の利用規約を守ってください。AI はレート制限付きです。キーをフロントに出さない構成のままにしてください。
 
 ## アーキテクチャ
 

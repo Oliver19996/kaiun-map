@@ -24,6 +24,46 @@
 
       <div class="status" id="status">接続中…</div>
 
+      <section class="project-box">
+        <h2>プロジェクト</h2>
+        <p class="hint">船団やウォッチリストを作って、船名・呼出符号・MMSI をまとめて管理します。</p>
+        <label class="field">
+          選択中
+          <select id="project-select">
+            <option value="">（すべての船）</option>
+          </select>
+        </label>
+        <div class="row">
+          <input id="project-name" type="text" placeholder="新しいプロジェクト名" />
+          <button id="project-create" type="button">作成</button>
+        </div>
+        <div class="row compact">
+          <button id="project-delete" class="ghost" type="button" hidden>このプロジェクトを削除</button>
+        </div>
+        <p class="ai-note" id="project-note"></p>
+
+        <div id="fleet" hidden>
+          <h2>登録船</h2>
+          <ul id="fleet-list" class="results fleet-list"></ul>
+          <label class="field">船名
+            <input id="ship-name" type="text" placeholder="例: SUNRISE MARU" />
+          </label>
+          <label class="field">呼出符号
+            <input id="ship-call" type="text" placeholder="例: JD1234" />
+          </label>
+          <label class="field">MMSI
+            <input id="ship-mmsi" type="text" inputmode="numeric" placeholder="例: 431000000" />
+          </label>
+          <label class="field">メモ
+            <input id="ship-notes" type="text" placeholder="任意" />
+          </label>
+          <div class="row">
+            <button id="ship-add" type="button">船を追加</button>
+            <button id="ship-add-selected" class="ghost" type="button">選択中のAIS船を追加</button>
+          </div>
+        </div>
+      </section>
+
       <label class="field">
         船名 / MMSI / 呼出符号
         <div class="row">

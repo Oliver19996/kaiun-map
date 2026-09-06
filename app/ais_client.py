@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import ssl
 from typing import Any
 
+import certifi
 import websockets
 from websockets.exceptions import ConnectionClosed
 
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 AIS_URL = "wss://stream.aisstream.io/v0/stream"
 MAX_SPAN_DEG = 12.0
 JAPAN_BBOX = (24.0, 122.0, 46.5, 148.0)
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 def clip_bbox(min_lat: float, min_lon: float, max_lat: float, max_lon: float) -> tuple[float, float, float, float]:
@@ -176,7 +179,13 @@ class AisHub:
     async def _connect_once(self) -> None:
         bbox = self._bbox
         self.status = "connecting"
-        async with websockets.connect(AIS_URL, ping_interval=20, ping_timeout=20, close_timeout=5) as ws:
+        async with websockets.connect(
+            AIS_URL,
+            ssl=SSL_CONTEXT,
+            ping_interval=20,
+            ping_timeout=20,
+            close_timeout=5,
+        ) as ws:
             await _subscribe(ws, bbox)
             self.status = "connected"
             logger.info("AISStream subscribed to %s", bbox)

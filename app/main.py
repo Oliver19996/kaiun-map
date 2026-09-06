@@ -15,6 +15,7 @@ from app.ais_client import AisHub, clip_bbox
 from app.ai import brief_vessel, interpret_search
 from app.config import settings
 from app.places import SHIP_TYPE_HINTS
+from app.projects import ProjectStore, ship_matches_live
 from app.rate_limit import RateLimiter
 from app.vessel_store import VesselStore
 
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 store = VesselStore()
+projects = ProjectStore()
 hub = AisHub(store)
 limiter = RateLimiter(
     per_minute=settings.ai_requests_per_minute,
@@ -53,6 +55,23 @@ class SearchBody(BaseModel):
 
 class BriefBody(BaseModel):
     mmsi: int
+
+
+class ProjectBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    notes: str = Field(default="", max_length=500)
+
+
+class ProjectPatchBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class ShipBody(BaseModel):
+    name: str = Field(default="", max_length=80)
+    call_sign: str = Field(default="", max_length=20)
+    mmsi: int | None = None
+    notes: str = Field(default="", max_length=300)
 
 
 @app.get("/")
@@ -92,6 +111,81 @@ async def ai_search(body: SearchBody, request: Request) -> dict:
             for v in store.in_bbox(min_lat, min_lon, max_lat, max_lon, interpreted.get("query") or "", type_codes)
         ]
     return {**interpreted, "vessels": vessels[:80]}
+
+
+@app.get("/api/projects")
+async def list_projects() -> dict:
+    return {"projects": projects.list_projects()}
+
+
+@app.post("/api/projects")
+async def create_project(body: ProjectBody) -> dict:
+    try:
+        return projects.create(body.name, body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str) -> dict:
+    project = projects.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。")
+    return _project_with_live(project)
+
+
+@app.patch("/api/projects/{project_id}")
+async def patch_project(project_id: str, body: ProjectPatchBody) -> dict:
+    try:
+        project = projects.update(project_id, body.name, body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if project is None:
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。")
+    return _project_with_live(project)
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str) -> dict:
+    if not projects.delete(project_id):
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。")
+    return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/ships")
+async def add_ship(project_id: str, body: ShipBody) -> dict:
+    try:
+        ship = projects.add_ship(project_id, body.model_dump())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    project = projects.get(project_id)
+    return {"ship": _live_ship(ship), "project": _project_with_live(project)}
+
+
+@app.patch("/api/projects/{project_id}/ships/{ship_id}")
+async def patch_ship(project_id: str, ship_id: str, body: ShipBody) -> dict:
+    try:
+        ship = projects.update_ship(project_id, ship_id, body.model_dump())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if ship is None:
+        raise HTTPException(status_code=404, detail="船が見つかりません。")
+    return {"ship": _live_ship(ship)}
+
+
+@app.delete("/api/projects/{project_id}/ships/{ship_id}")
+async def remove_ship(project_id: str, ship_id: str) -> dict:
+    try:
+        ok = projects.delete_ship(project_id, ship_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。") from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="船が見つかりません。")
+    return {"ok": True}
 
 
 @app.post("/api/ai/brief")
@@ -162,3 +256,23 @@ def _enforce_ai_limit(request: Request) -> None:
     ok, reason = limiter.allow(ip)
     if not ok:
         raise HTTPException(status_code=429, detail=reason)
+
+
+def _live_ship(saved: dict) -> dict:
+    if saved.get("mmsi"):
+        vessel = store.get(int(saved["mmsi"]))
+        if vessel:
+            return {**saved, "live": vessel.to_public_dict()}
+    query = saved.get("call_sign") or saved.get("name") or ""
+    if query:
+        for vessel in store.search(query, limit=30):
+            public = vessel.to_public_dict()
+            if ship_matches_live(saved, public):
+                return {**saved, "live": public}
+    return {**saved, "live": None}
+
+
+def _project_with_live(project: dict | None) -> dict:
+    if project is None:
+        return {}
+    return {**project, "ships": [_live_ship(ship) for ship in project.get("ships") or []]}
