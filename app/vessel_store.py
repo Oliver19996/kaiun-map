@@ -117,6 +117,15 @@ class VesselStore:
     def __init__(self) -> None:
         self._lock = Lock()
         self._vessels: dict[int, Vessel] = {}
+        self._protected: set[int] = set()
+
+    def protect(self, mmsis) -> None:
+        with self._lock:
+            self._protected.update(int(mmsi) for mmsi in mmsis)
+
+    def all(self) -> list[Vessel]:
+        with self._lock:
+            return list(self._vessels.values())
 
     def upsert_position(
         self,
@@ -226,6 +235,8 @@ class VesselStore:
                     and min_lat <= vessel.lat <= max_lat
                     and min_lon <= vessel.lon <= max_lon
                 )
+                if mmsi in self._protected:
+                    continue
                 if age > max_age_sec or (not inside and age > 120):
                     drop.append(mmsi)
             for mmsi in drop:
