@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from app.geo import places_payload
 from app.places import lookup_place
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "projects.json"
@@ -182,10 +183,18 @@ def _normalize_ship(fields: dict[str, Any], ship_id: str | None = None) -> dict[
         raise ValueError("船名、呼出符号、MMSI のうち少なくとも1つを入れてください。")
     origin_id = str(fields.get("origin_place_id") or "").strip() or None
     dest_id = str(fields.get("dest_place_id") or "").strip() or None
+    transship_ids = _id_list(fields.get("transship_place_ids"))
+    call_ids = _id_list(fields.get("call_place_ids"))
     if origin_id and not lookup_place(origin_id):
-        raise ValueError("出発地点がカタログにありません。")
+        raise ValueError("船積港がカタログにありません。")
     if dest_id and not lookup_place(dest_id):
-        raise ValueError("行き先がカタログにありません。")
+        raise ValueError("船卸港がカタログにありません。")
+    for place_id in transship_ids:
+        if not lookup_place(place_id):
+            raise ValueError("積み替え地がカタログにありません。")
+    for place_id in call_ids:
+        if not lookup_place(place_id):
+            raise ValueError("寄港地がカタログにありません。")
     origin = lookup_place(origin_id)
     dest = lookup_place(dest_id)
     origin_pt = None
@@ -196,6 +205,8 @@ def _normalize_ship(fields: dict[str, Any], ship_id: str | None = None) -> dict[
     if dest:
         min_lat, min_lon, max_lat, max_lon = dest["bbox"]
         dest_pt = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
+    transship_places = places_payload(transship_ids)
+    call_places = places_payload(call_ids)
     return {
         "id": ship_id or str(uuid.uuid4()),
         "name": name,
@@ -210,10 +221,28 @@ def _normalize_ship(fields: dict[str, Any], ship_id: str | None = None) -> dict[
         "dest_name": dest["name"] if dest else None,
         "dest_lat": dest_pt[0] if dest_pt else None,
         "dest_lon": dest_pt[1] if dest_pt else None,
+        "transship_place_ids": transship_ids,
+        "transship_places": transship_places,
+        "call_place_ids": call_ids,
+        "call_places": call_places,
         "planned_arrival_at": str(fields.get("planned_arrival_at") or "").strip() or None,
         "planned_departure_at": str(fields.get("planned_departure_at") or "").strip() or None,
         "updated_at": _now(),
     }
+
+
+def _id_list(raw: Any) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+    else:
+        values = [str(item).strip() for item in raw if str(item).strip()]
+    seen: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.append(value)
+    return seen[:6]
 
 
 def _same_ship(left: dict[str, Any], right: dict[str, Any]) -> bool:

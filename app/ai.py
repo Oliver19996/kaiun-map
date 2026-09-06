@@ -130,6 +130,70 @@ async def brief_vessel(vessel: Vessel) -> dict[str, Any]:
         }
 
 
+async def assistant_chat(message: str, context: dict[str, Any]) -> dict[str, Any]:
+    facts = _chat_facts_text(context)
+    if not settings.openai_api_key:
+        return {"reply": facts, "source": "facts_only", "facts": facts}
+    system = (
+        "You are a Japanese assistant on a public AIS shipping map. "
+        "Answer the user's question using only the JSON facts. "
+        "Keep facts and guesses separate. Never invent cargo, official schedules, or weather not in the JSON. "
+        "Bill of lading ports (船積・積み替え・船卸) are distinct from 寄港地 (operational calls not on the B/L). "
+        "Reply JSON with key reply (Japanese string)."
+    )
+    try:
+        data = await _chat_json(
+            system=system,
+            user=json.dumps({"question": message, "facts": context}, ensure_ascii=False)[:6000],
+            max_tokens=min(settings.openai_max_tokens, 500),
+        )
+        reply = str(data.get("reply") or facts)
+        return {"reply": reply, "source": "llm", "facts": facts}
+    except Exception:
+        logger.exception("LLM chat failed")
+        return {"reply": facts, "source": "facts_only", "facts": facts}
+
+
+def _chat_facts_text(context: dict[str, Any]) -> str:
+    vessel = context.get("vessel") or {}
+    bl = context.get("bl") or {}
+    name = vessel.get("name") or "船未選択"
+    lines = [f"対象: {name}（MMSI {vessel.get('mmsi') or '未選択'}）。"]
+    load = bl.get("load") or {}
+    discharge = bl.get("discharge") or {}
+    trans = "、".join(p.get("name") or "" for p in (bl.get("transship") or []) if p.get("name")) or "未設定"
+    calls = "、".join(p.get("name") or "" for p in (context.get("call_ports") or []) if p.get("name")) or "未設定"
+    lines.append(f"B/L 船積 {load.get('name') or '未設定'} / 積み替え {trans} / 船卸 {discharge.get('name') or '未設定'}。")
+    lines.append(f"寄港地（B/L外）: {calls}。")
+    weather = context.get("weather") or {}
+    for key, label in (("load", "船積港"), ("discharge", "船卸港")):
+        item = weather.get(key)
+        if not item:
+            continue
+        lines.append(
+            f"{label}（{item.get('name') or '不明'}）の天気: {item.get('summary') or '不明'}、"
+            f"{item.get('temperature_c')}℃、風 {item.get('wind_kn')} kn。"
+        )
+    eta = context.get("eta")
+    if eta:
+        nxt = (eta.get("next") or {}).get("name") or "次地点"
+        hours = eta.get("hours")
+        lines.append(
+            f"現在地から{nxt}まで約 {eta.get('distance_nm')} 海里。"
+            + (f"速力 {eta.get('sog')} kn なら約 {hours} 時間。" if hours is not None else "速力が低いため所要時間は出せません。")
+        )
+    delay = context.get("delay") or {}
+    if delay.get("hours") is not None:
+        lines.append(f"遅れ: {delay.get('hours')} 時間。{delay.get('reason') or ''}")
+    elif delay.get("ais_eta"):
+        lines.append(f"予告着港（AIS ETA）: {delay.get('ais_eta')}。遅延時間はまだ算出できません。")
+    else:
+        lines.append("予告着港時刻が無いため遅れは算出できません。")
+    if vessel.get("lat") is not None:
+        lines.append(f"現在位置 {vessel.get('lat')}, {vessel.get('lon')}、速力 {vessel.get('sog')} kn。")
+    return "".join(lines)
+
+
 def _facts_text(facts: dict[str, Any]) -> str:
     name = facts.get("name") or "船名未着"
     return (
