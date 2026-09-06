@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>kaiun-map — 海運リアルタイムマップ</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <aside class="panel">
+      <header>
+        <p class="kicker">Japan &amp; world shipping</p>
+        <h1>kaiun-map</h1>
+        <p class="lede">
+          地図に映っている範囲の AIS をほぼリアルタイムで表示します。欠測や遅延があり、公式の運航情報ではありません。
+        </p>
+      </header>
+
+      <div class="status" id="status">接続中…</div>
+
+      <label class="field">
+        船名 / MMSI / 呼出符号
+        <div class="row">
+          <input id="search" type="search" placeholder="例: 432870000 または船名" />
+          <button id="search-btn" type="button">検索</button>
+        </div>
+      </label>
+      <ul id="results" class="results"></ul>
+
+      <label class="field">
+        AI で探す
+        <div class="row">
+          <input id="ai-q" type="text" placeholder="例: 大阪湾のタンカー" />
+          <button id="ai-btn" type="button">探す</button>
+        </div>
+      </label>
+      <p class="ai-note" id="ai-note"></p>
+
+      <section class="brief" hidden id="brief-box">
+        <h2>選択中の船</h2>
+        <div id="selected-meta"></div>
+        <button id="brief-btn" type="button">この船を解説</button>
+        <div id="brief-out"></div>
+      </section>
+
+      <footer>
+        位置情報は AISStream。広域地図は Esri Ocean、拡大時は OpenStreetMap。キーはサーバ側のみ。
+        今後の構想: 異常検知の文章化、港湾規制の出典付き Q&amp;A、解説の多言語化。
+      </footer>
+    </aside>
+    <div id="map"></div>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
