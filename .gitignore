@@ -13,3 +13,5 @@ build/
 *.log
 data/*.json
 data/*.tmp
+data/vectors/
+data/uploads/

@@ -24,7 +24,7 @@ body {
 body {
   display: grid;
   grid-template-columns: minmax(280px, 360px) 1fr;
-  grid-template-rows: 1fr 230px;
+  grid-template-rows: 1fr 300px;
   height: 100%;
 }
 
@@ -134,11 +134,11 @@ button.ghost {
 }
 
 .ship-icon.in-project {
-  border-bottom-color: #7ab8ff;
+  border-bottom-color: #2ee6ff;
 }
 
 .ship-icon.in-project.selected {
-  border-bottom-color: #ffd36a;
+  border-bottom-color: #2ee6ff;
 }
 
 .field {
@@ -244,7 +244,7 @@ button {
 }
 
 #map-legend .leg.here {
-  background: #ffd36a;
+  background: #2ee6ff;
 }
 #map-legend .leg.load {
   background: #3de0c5;
@@ -261,21 +261,22 @@ button {
   height: 8px;
 }
 #map-legend .leg.disc {
-  background: #ffb020;
+  background: #ff5a1f;
+  border-radius: 2px;
 }
 
 .ship-icon.selected {
   border-left-width: 8px;
   border-right-width: 8px;
   border-bottom-width: 22px;
-  border-bottom-color: #ffd36a;
-  filter: drop-shadow(0 0 8px rgba(255, 211, 106, 0.95));
+  border-bottom-color: #2ee6ff;
+  filter: drop-shadow(0 0 8px rgba(46, 230, 255, 0.95));
 }
 
 .here-ring {
   width: 28px;
   height: 28px;
-  border: 2px solid #ffd36a;
+  border: 2px solid #2ee6ff;
   border-radius: 50%;
   animation: pulse-ring 1.6s ease-out infinite;
 }
@@ -342,6 +343,52 @@ button {
   padding: 6px 10px;
 }
 
+.chat-tools {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(160px, 1.2fr) minmax(160px, 1fr);
+  gap: 8px 12px;
+  align-items: end;
+}
+
+.chat-tools .field {
+  margin: 0;
+}
+
+.chat-docs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+
+.chat-docs li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: #07141d;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.chat-docs button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.chat-cite {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .ship-icon {
   width: 0;
   height: 0;
@@ -376,7 +423,7 @@ body.auth-page {
 }
 
 .auth-card {
-  width: min(420px, 92vw);
+  width: min(480px, 92vw);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -389,7 +436,7 @@ body.auth-page {
 @media (max-width: 800px) {
   body {
     grid-template-columns: 1fr;
-    grid-template-rows: 34vh 1fr 230px;
+    grid-template-rows: 34vh 1fr 300px;
   }
 
   .panel {
@@ -404,5 +451,9 @@ body.auth-page {
 
   #chat-dock {
     grid-row: 3;
+  }
+
+  .chat-tools {
+    grid-template-columns: 1fr;
   }
 }

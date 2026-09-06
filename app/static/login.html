@@ -19,6 +19,15 @@
         <label class="field">パスワード
           <input name="password" type="password" autocomplete="current-password" required minlength="8" />
         </label>
+        <label class="field">属性（新規登録時は必須）
+          <select name="role" id="role-select">
+            <option value="">選んでください</option>
+          </select>
+        </label>
+        <label class="field">会社・部署（任意）
+          <input name="company" maxlength="80" placeholder="例: ○○商事 物流部" />
+        </label>
+        <p class="hint">属性は AI が「あなたは船会社です」のように裏で役割を固定し、実務目線の回答に使います。ログイン時は不要です。</p>
         <p class="ai-note" id="auth-note"></p>
         <div class="row">
           <button type="submit" id="login-btn">ログイン</button>
@@ -29,8 +38,27 @@
     <script>
       const note = document.getElementById("auth-note");
       const form = document.getElementById("auth-form");
+      async function loadRoles() {
+        const res = await fetch("/api/auth/roles");
+        const data = await res.json();
+        const sel = document.getElementById("role-select");
+        for (const role of data.roles || []) {
+          const opt = document.createElement("option");
+          opt.value = role.id;
+          opt.textContent = role.label;
+          sel.appendChild(opt);
+        }
+      }
       async function send(path) {
         const body = Object.fromEntries(new FormData(form).entries());
+        if (path.endsWith("/register") && !body.role) {
+          note.textContent = "属性を選んでください。";
+          return;
+        }
+        if (path.endsWith("/login")) {
+          delete body.role;
+          delete body.company;
+        }
         note.textContent = "送信中…";
         const res = await fetch(path, {
           method: "POST",
@@ -49,6 +77,7 @@
         send("/api/auth/login");
       });
       document.getElementById("register-btn").addEventListener("click", () => send("/api/auth/register"));
+      loadRoles();
     </script>
   </body>
 </html>

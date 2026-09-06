@@ -7,7 +7,8 @@ class Settings(BaseSettings):
     aisstream_api_key: str = ""
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
-    openai_max_tokens: int = 400
+    openai_embed_model: str = "text-embedding-3-small"
+    openai_max_tokens: int = 900
     daily_ai_request_limit: int = 200
     ai_requests_per_minute: int = 10
     session_secret: str = "dev-change-SESSION_SECRET"

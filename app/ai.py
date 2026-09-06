@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.roles import role_prompt
 from app.places import (
     SHIP_TYPE_HINTS,
     lookup_place,
@@ -132,26 +133,39 @@ async def brief_vessel(vessel: Vessel) -> dict[str, Any]:
 
 async def assistant_chat(message: str, context: dict[str, Any]) -> dict[str, Any]:
     facts = _chat_facts_text(context)
+    docs = context.get("documents") or []
+    role_line = context.get("role_prompt") or role_prompt(None)
     if not settings.openai_api_key:
-        return {"reply": facts, "source": "facts_only", "facts": facts}
+        extra = ""
+        if docs:
+            extra = "資料抜粋: " + " / ".join(d.get("text", "")[:180] for d in docs[:3])
+        return {"reply": facts + extra, "source": "facts_only", "facts": facts, "used_docs": [d.get("filename") for d in docs]}
     system = (
-        "You are a Japanese assistant on a public AIS shipping map. "
-        "Answer the user's question using only the JSON facts. "
-        "Keep facts and guesses separate. Never invent cargo, official schedules, or weather not in the JSON. "
-        "Bill of lading ports (船積・積み替え・船卸) are distinct from 寄港地 (operational calls not on the B/L). "
-        "Reply JSON with key reply (Japanese string)."
+        role_line
+        + " 公開AISマップのアシスタントとして、日本語で詳しく答えてください。"
+        + " 回答は次の見出しを使ったMarkdownにしてください: 【事実】【資料からの根拠】【役割に応じた含意】【不明・確認が必要】。"
+        + " 各見出しの下に2〜5個の短い箇条書きを書いてください。空の見出しは『該当なし』と書いてください。"
+        + " JSONのfactsとdocumentsに無い貨物・契約・公式スケジュールは作らないでください。"
+        + " 船積・積み替え・船卸はB/L上の港、寄港地はB/L外の運航寄港として必ず区別してください。"
+        + " 推測は【役割に応じた含意】にだけ書き、断定しないでください。"
+        + " Reply JSON with key reply (Japanese markdown string)."
     )
+    payload = {
+        "question": message,
+        "facts": {k: v for k, v in context.items() if k not in {"role_prompt", "documents"}},
+        "documents": docs,
+    }
     try:
         data = await _chat_json(
             system=system,
-            user=json.dumps({"question": message, "facts": context}, ensure_ascii=False)[:6000],
-            max_tokens=min(settings.openai_max_tokens, 500),
+            user=json.dumps(payload, ensure_ascii=False)[:12000],
+            max_tokens=min(max(settings.openai_max_tokens, 400), 900),
         )
         reply = str(data.get("reply") or facts)
-        return {"reply": reply, "source": "llm", "facts": facts}
+        return {"reply": reply, "source": "llm", "facts": facts, "used_docs": [d.get("filename") for d in docs]}
     except Exception:
         logger.exception("LLM chat failed")
-        return {"reply": facts, "source": "facts_only", "facts": facts}
+        return {"reply": facts, "source": "facts_only", "facts": facts, "used_docs": [d.get("filename") for d in docs]}
 
 
 def _chat_facts_text(context: dict[str, Any]) -> str:
@@ -205,6 +219,39 @@ def _facts_text(facts: dict[str, Any]) -> str:
     )
 
 
+async def embed_texts(texts: list[str]) -> list[list[float]]:
+    cleaned = [t.strip()[:4000] for t in texts if t and t.strip()]
+    if not cleaned:
+        return []
+    if not settings.openai_api_key:
+        return [_hash_embedding(t) for t in cleaned]
+    headers = {
+        "Authorization": f"Bearer {settings.openai_api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {"model": settings.openai_embed_model, "input": cleaned}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post("https://api.openai.com/v1/embeddings", headers=headers, json=body)
+        response.raise_for_status()
+        data = response.json()["data"]
+    data.sort(key=lambda item: item["index"])
+    return [item["embedding"] for item in data]
+
+
+def _hash_embedding(text: str, dim: int = 64) -> list[float]:
+    import hashlib
+    import re
+
+    vec = [0.0] * dim
+    for token in re.findall(r"[A-Za-z0-9]+|[一-龥ぁ-んァ-ンー]+", text.lower()):
+        digest = hashlib.md5(token.encode("utf-8")).digest()
+        vec[digest[0] % dim] += 1.0 + digest[1] / 255.0
+    norm = sum(v * v for v in vec) ** 0.5
+    if norm <= 0:
+        return vec
+    return [v / norm for v in vec]
+
+
 async def _chat_json(*, system: str, user: str, max_tokens: int) -> dict[str, Any]:
     headers = {
         "Authorization": f"Bearer {settings.openai_api_key}",
@@ -220,7 +267,7 @@ async def _chat_json(*, system: str, user: str, max_tokens: int) -> dict[str, An
             {"role": "user", "content": user},
         ],
     }
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=body)
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]

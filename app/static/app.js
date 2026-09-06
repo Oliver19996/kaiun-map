@@ -12,6 +12,17 @@ let selectedShipId = null;
 let sampleRetry = 0;
 let isGuest = true;
 
+const ROUTE_COLORS = {
+  here: "#2ee6ff",
+  load: "#3de0c5",
+  trans: "#c084fc",
+  call: "#7ab8ff",
+  disc: "#ff5a1f",
+  bl: "#b388ff",
+  live: "#2ee6ff",
+};
+const seaRouteCache = new Map();
+let routeDrawSeq = 0;
 const map = L.map("map", { worldCopyJump: true, minZoom: 3, maxZoom: 16 }).setView(JAPAN, 6);
 const routeLayer = L.layerGroup().addTo(map);
 L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}", {
@@ -240,6 +251,16 @@ document.getElementById("chat-send").addEventListener("click", sendChat);
 document.getElementById("chat-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendChat();
 });
+document.getElementById("chat-role").addEventListener("change", saveProfile);
+document.getElementById("chat-company").addEventListener("change", saveProfile);
+document.getElementById("chat-doc").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (file) uploadDoc(file);
+});
+document.getElementById("chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendChat();
+});
 document.querySelectorAll(".chat-ex").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.getElementById("chat-input").value = btn.dataset.q || "";
@@ -313,14 +334,16 @@ async function boot() {
   const logoutBtn = document.getElementById("logout-btn");
   const loginLink = document.getElementById("login-link");
   if (isGuest) {
-    who.textContent = "ゲスト";
+    who.textContent = `ゲスト（${user.role_label || "調査・アナリスト"}）`;
     logoutBtn.hidden = true;
     loginLink.hidden = false;
   } else {
-    who.textContent = user.user_id;
+    who.textContent = `${user.user_id}（${user.role_label || ""}）`;
     logoutBtn.hidden = false;
     loginLink.hidden = true;
   }
+  await fillRoleSelect(user);
+  await loadDocs();
   await loadPlaces();
   connect();
   loadProjects();
@@ -362,35 +385,76 @@ function blPoints(ship) {
   return points;
 }
 
-function drawRoutes() {
-  routeLayer.clearLayers();
-  if (!currentProject) return;
+async function fetchSeaPath(points) {
+  const usable = (points || []).filter((p) => p && p.lat != null && p.lon != null);
+  if (usable.length < 2) return usable.map((p) => [p.lat, p.lon]);
+  const key = usable.map((p) => `${p.lat.toFixed(3)},${p.lon.toFixed(3)}`).join(">");
+  if (seaRouteCache.has(key)) return seaRouteCache.get(key);
+  try {
+    const res = await fetch("/api/searoute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waypoints: usable.map((p) => [p.lat, p.lon]) }),
+    });
+    const data = await res.json();
+    const path = data.path && data.path.length >= 2 ? data.path : usable.map((p) => [p.lat, p.lon]);
+    seaRouteCache.set(key, path);
+    return path;
+  } catch {
+    const fallback = usable.map((p) => [p.lat, p.lon]);
+    seaRouteCache.set(key, fallback);
+    return fallback;
+  }
+}
+
+async function drawRoutes() {
+  const seq = ++routeDrawSeq;
+  if (!currentProject) {
+    routeLayer.clearLayers();
+    return;
+  }
   const hasSelection = Boolean(selectedShipId || selectedMmsi);
-  (currentProject.ships || []).forEach((ship) => {
-    const selected = ship.id === selectedShipId || (selectedMmsi && Number(ship.mmsi) === Number(selectedMmsi));
+  const planned = await Promise.all(
+    (currentProject.ships || []).map(async (ship) => {
+      const selected = ship.id === selectedShipId || (selectedMmsi && Number(ship.mmsi) === Number(selectedMmsi));
+      const bl = blPoints(ship);
+      const live = ship.live;
+      const next =
+        (ship.call_places && ship.call_places[0]) ||
+        (ship.dest_lat != null ? { lat: ship.dest_lat, lon: ship.dest_lon, name: ship.dest_name } : null);
+      const [blPath, livePath] = await Promise.all([
+        fetchSeaPath(bl),
+        live?.lat != null && next?.lat != null ? fetchSeaPath([live, next]) : Promise.resolve(null),
+      ]);
+      return { ship, selected, bl, blPath, live, next, livePath };
+    })
+  );
+  if (seq !== routeDrawSeq) return;
+  routeLayer.clearLayers();
+  planned.forEach(({ ship, selected, bl, blPath, live, next, livePath }) => {
     const dim = hasSelection && !selected;
     const opacity = dim ? 0.22 : 1;
-    const bl = blPoints(ship);
-    if (bl.length >= 2) {
-      L.polyline(
-        bl.map((p) => [p.lat, p.lon]),
-        { color: selected ? "#ffd36a" : "#c084fc", weight: selected ? 5 : 2, dashArray: "7 6", opacity }
-      )
+    if (blPath && blPath.length >= 2) {
+      L.polyline(blPath, {
+        color: selected ? ROUTE_COLORS.bl : "#8661c7",
+        weight: selected ? 5 : 2.5,
+        opacity,
+      })
         .bindPopup(
-          `${escapeHtml(ship.name || "航路")}<br>B/L: ${escapeHtml(ship.origin_name || "船積未設定")} → ${escapeHtml(
+          `${escapeHtml(ship.name || "海上航路")}<br>B/L: ${escapeHtml(ship.origin_name || "船積未設定")} → ${escapeHtml(
             (ship.transship_places || []).map((p) => p.name).join(" → ") || "積み替えなし"
           )} → ${escapeHtml(ship.dest_name || "船卸未設定")}`
         )
         .addTo(routeLayer);
     }
     bl.forEach((point) => {
-      const colors = { load: "#3de0c5", trans: "#c084fc", disc: "#ffb020" };
+      const isDisc = point.kind === "disc";
       L.circleMarker([point.lat, point.lon], {
-        radius: selected ? 8 : 6,
-        color: colors[point.kind],
-        fillColor: colors[point.kind],
+        radius: selected ? (isDisc ? 9 : 7) : isDisc ? 7 : 6,
+        color: ROUTE_COLORS[point.kind],
+        fillColor: ROUTE_COLORS[point.kind],
         fillOpacity: 0.95 * opacity,
-        weight: selected ? 3 : 1,
+        weight: isDisc ? 3 : selected ? 3 : 1,
         opacity,
       })
         .bindTooltip(`${point.kind === "load" ? "船積" : point.kind === "trans" ? "積み替え" : "船卸"} ${point.name || ""}`)
@@ -400,7 +464,7 @@ function drawRoutes() {
       if (place.lat == null) return;
       L.circleMarker([place.lat, place.lon], {
         radius: selected ? 7 : 5,
-        color: "#7ab8ff",
+        color: ROUTE_COLORS.call,
         fillColor: "#071018",
         fillOpacity: 0.9,
         weight: 2,
@@ -409,20 +473,27 @@ function drawRoutes() {
         .bindTooltip(`寄港（B/L外） ${place.name || ""}`)
         .addTo(routeLayer);
     });
-    const live = ship.live;
+    if (livePath && livePath.length >= 2) {
+      L.polyline(livePath, {
+        color: ROUTE_COLORS.live,
+        weight: selected ? 4 : 2,
+        dashArray: "1 8",
+        opacity,
+      })
+        .bindPopup(`${escapeHtml(ship.name || "現在地")} → ${escapeHtml(next?.name || "次地点")}`)
+        .addTo(routeLayer);
+    }
     if (live?.lat != null) {
-      const next = (ship.call_places && ship.call_places[0]) || (ship.dest_lat != null ? { lat: ship.dest_lat, lon: ship.dest_lon, name: ship.dest_name } : null);
-      if (next?.lat != null) {
-        L.polyline(
-          [
-            [live.lat, live.lon],
-            [next.lat, next.lon],
-          ],
-          { color: selected ? "#ffd36a" : "#3de0c5", weight: selected ? 4 : 2, opacity }
-        )
-          .bindPopup(`${escapeHtml(ship.name || "現在地")} → ${escapeHtml(next.name || "次地点")}`)
-          .addTo(routeLayer);
-      }
+      L.circleMarker([live.lat, live.lon], {
+        radius: selected ? 9 : 6,
+        color: ROUTE_COLORS.here,
+        fillColor: ROUTE_COLORS.here,
+        fillOpacity: 0.35,
+        weight: 3,
+        opacity,
+      })
+        .bindTooltip(`現在位置 ${ship.name || live.name || ""}`)
+        .addTo(routeLayer);
       if (selected) {
         L.marker([live.lat, live.lon], {
           icon: L.divIcon({ className: "", html: '<div class="here-ring"></div>', iconSize: [28, 28], iconAnchor: [14, 14] }),
@@ -743,11 +814,87 @@ async function removeShip(shipId) {
   await loadProjects();
 }
 
-function appendChat(role, text) {
+async function fillRoleSelect(user) {
+  const sel = document.getElementById("chat-role");
+  const company = document.getElementById("chat-company");
+  if (!sel.options.length) {
+    const res = await fetch("/api/auth/roles");
+    const data = res.ok ? await res.json() : { roles: [] };
+    for (const role of data.roles || []) {
+      const opt = document.createElement("option");
+      opt.value = role.id;
+      opt.textContent = role.label;
+      sel.appendChild(opt);
+    }
+  }
+  sel.value = user.role || "analyst";
+  company.value = user.company || "";
+}
+
+async function saveProfile() {
+  const role = document.getElementById("chat-role").value;
+  const company = document.getElementById("chat-company").value;
+  const res = await fetch("/api/auth/profile", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, company }),
+  });
+  const user = await res.json();
+  if (!res.ok) return;
+  const who = document.getElementById("whoami");
+  if (user.guest) {
+    who.textContent = `ゲスト（${user.role_label || ""}）`;
+  } else {
+    who.textContent = `${user.user_id}（${user.role_label || ""}）`;
+  }
+}
+
+async function loadDocs() {
+  const res = await fetch("/api/docs");
+  const data = res.ok ? await res.json() : { docs: [] };
+  const list = document.getElementById("chat-docs");
+  list.innerHTML = "";
+  for (const doc of data.docs || []) {
+    const li = document.createElement("li");
+    li.append(document.createTextNode(doc.filename || "資料"));
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "×";
+    btn.addEventListener("click", () => deleteDoc(doc.id));
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
+async function uploadDoc(file) {
+  const body = new FormData();
+  body.append("file", file);
+  appendChat("bot", `${file.name} を読み込んでいます…`);
+  const pending = document.getElementById("chat-log").lastElementChild;
+  const res = await fetch("/api/docs", { method: "POST", body });
+  const data = await res.json();
+  pending.textContent = res.ok
+    ? `${data.doc.filename} をベクトル化しました（${data.doc.chunk_count} 断片）。以降の質問で参照します。`
+    : data.detail || "アップロードできませんでした。";
+  if (res.ok) await loadDocs();
+}
+
+async function deleteDoc(id) {
+  await fetch(`/api/docs/${id}`, { method: "DELETE" });
+  await loadDocs();
+}
+
+function appendChat(role, text, cites) {
   const log = document.getElementById("chat-log");
   const bubble = document.createElement("div");
   bubble.className = `chat-bubble ${role}`;
   bubble.textContent = text;
+  if (cites && cites.length) {
+    const cite = document.createElement("span");
+    cite.className = "chat-cite";
+    cite.textContent = `根拠資料: ${cites.filter(Boolean).join(" / ")}`;
+    bubble.appendChild(cite);
+  }
   log.appendChild(bubble);
   log.scrollTop = log.scrollHeight;
 }
@@ -772,4 +919,10 @@ async function sendChat() {
   });
   const data = await res.json();
   pending.textContent = res.ok ? data.reply || data.facts || "回答を生成できませんでした。" : data.detail || "送信に失敗しました。";
+  if (res.ok && data.used_docs && data.used_docs.length) {
+    const cite = document.createElement("span");
+    cite.className = "chat-cite";
+    cite.textContent = `根拠資料: ${data.used_docs.filter(Boolean).join(" / ")}`;
+    pending.appendChild(cite);
+  }
 }
