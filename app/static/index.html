@@ -108,7 +108,7 @@
       </section>
 
       <footer>
-        位置情報は AISStream。広域地図は Esri Ocean、拡大時は OpenStreetMap。天気は Open-Meteo。キーはサーバ側のみ。
+        位置情報は AISStream。広域地図は Esri Ocean、拡大時は OpenStreetMap。天気は Open-Meteo。海上航路は可視化用で、公式の航海援助ではありません。
       </footer>
     </aside>
     <div class="map-wrap">
@@ -123,12 +123,25 @@
     </div>
     <section id="chat-dock">
       <h2>AI チャット</h2>
-      <p class="hint">地図上の船を選ぶと、その船の現在位置・B/L港・寄港地を前提に答えます。</p>
+      <p class="hint">役割に応じた裏プロンプトと、アップロードした B/L 等の抜粋を使って詳しく答えます。地図上の船を選ぶと現在位置・B/L港・寄港地も前提になります。</p>
+      <div class="chat-tools">
+        <label class="field">あなたの属性
+          <select id="chat-role"></select>
+        </label>
+        <label class="field">会社・部署（任意）
+          <input id="chat-company" maxlength="80" placeholder="例: ○○海運 運航部" />
+        </label>
+        <label class="field">B/L・関連資料
+          <input id="chat-doc" type="file" accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain" />
+        </label>
+      </div>
+      <ul id="chat-docs" class="chat-docs"></ul>
       <div id="chat-log"></div>
       <div class="chat-examples">
         <button type="button" class="ghost chat-ex" data-q="船積港と船卸港のいまの天気を教えて">船積・船卸港の天気</button>
         <button type="button" class="ghost chat-ex" data-q="次の目的地までの推定所要時間は？">次地点までの所要時間</button>
         <button type="button" class="ghost chat-ex" data-q="予告着港時間からどれだけ遅れている？">予告着港からの遅れ</button>
+        <button type="button" class="ghost chat-ex" data-q="アップロードした資料から、船積港・船卸港・荷受人を抜粋して、いまのAIS位置との関係を整理して">資料と船位の整理</button>
       </div>
       <div class="row">
         <input id="chat-input" type="text" placeholder="聞きたいことを入力" />

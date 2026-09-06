@@ -7,14 +7,14 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.ais_client import AisHub, clip_bbox
-from app.ai import assistant_chat, brief_vessel, interpret_search
+from app.ai import assistant_chat, brief_vessel, embed_texts, interpret_search
 from app.geo import hours_for_nm, nm_between
 from app.config import settings
 from app.guest import GuestProjectStore
@@ -23,6 +23,9 @@ from app.port import port_fields, parse_iso
 from app.projects import ProjectStore, ship_matches_live
 from app.rate_limit import RateLimiter
 from app.sample import SAMPLE_ID, sample_project, sample_summary
+from app.searoute_path import sea_polyline
+from app.docs_store import DocStore, chunk_text, extract_text
+from app.roles import normalize_role, public_profile, role_catalog, role_prompt
 from app.users import UserStore, current_user_id
 from app.vessel_store import VesselStore
 from app.weather import forecast
@@ -35,6 +38,7 @@ store = VesselStore()
 projects = ProjectStore()
 guests = GuestProjectStore()
 users = UserStore()
+docs = DocStore()
 hub = AisHub(store)
 limiter = RateLimiter(
     per_minute=settings.ai_requests_per_minute,
@@ -98,15 +102,26 @@ class ShipBody(BaseModel):
 
 
 class ChatBody(BaseModel):
-    message: str = Field(min_length=1, max_length=500)
+    message: str = Field(min_length=1, max_length=1500)
     mmsi: int | None = None
     project_id: str | None = None
     ship_id: str | None = None
 
 
+class SeaRouteBody(BaseModel):
+    waypoints: list[list[float]] = Field(min_length=2, max_length=8)
+
+
 class AuthBody(BaseModel):
     user_id: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=8, max_length=128)
+    role: str | None = None
+    company: str | None = None
+
+
+class ProfileBody(BaseModel):
+    role: str | None = None
+    company: str | None = None
 
 
 @app.get("/")
@@ -119,14 +134,23 @@ async def login_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "login.html")
 
 
+@app.get("/api/auth/roles")
+async def auth_roles() -> dict:
+    return {"roles": role_catalog()}
+
+
 @app.post("/api/auth/register")
 async def register(body: AuthBody, request: Request) -> dict:
+    if not body.role:
+        raise HTTPException(status_code=400, detail="属性（役割）を選んでください。")
     try:
-        user = users.create(body.user_id, body.password)
+        user = users.create(body.user_id, body.password, role=body.role, company=body.company or "")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     request.session["uid"] = user["id"]
     request.session["user_id"] = user["user_id"]
+    request.session.pop("role", None)
+    request.session.pop("company", None)
     return user
 
 
@@ -151,19 +175,51 @@ async def me(request: Request) -> dict:
     uid = current_user_id(request)
     if not uid:
         _ensure_guest(request)
-        return {"guest": True, "user_id": None}
+        profile = public_profile(request.session.get("role"), request.session.get("company") or "")
+        return {"guest": True, "user_id": None, **profile}
     user = users.get_by_id(uid)
     if user is None:
         request.session.pop("uid", None)
         request.session.pop("user_id", None)
         _ensure_guest(request)
-        return {"guest": True, "user_id": None}
+        profile = public_profile(request.session.get("role"), request.session.get("company") or "")
+        return {"guest": True, "user_id": None, **profile}
     return {**user, "guest": False}
+
+
+@app.patch("/api/auth/profile")
+async def patch_profile(body: ProfileBody, request: Request) -> dict:
+    uid = current_user_id(request)
+    if uid:
+        user = users.update_profile(uid, role=body.role, company=body.company)
+        if user is None:
+            raise HTTPException(status_code=401, detail="ログインしてください。")
+        return {**user, "guest": False}
+    _ensure_guest(request)
+    if body.role is not None:
+        request.session["role"] = normalize_role(body.role)
+    if body.company is not None:
+        request.session["company"] = body.company.strip()[:80]
+    profile = public_profile(request.session.get("role"), request.session.get("company") or "")
+    return {"guest": True, "user_id": None, **profile}
 
 
 @app.get("/api/places")
 async def places() -> dict:
     return {"places": [p for p in place_catalog_for_prompt() if p["id"] != "japan"]}
+
+
+@app.post("/api/searoute")
+async def searoute_api(body: SeaRouteBody) -> dict:
+    waypoints = []
+    for pair in body.waypoints:
+        if len(pair) != 2:
+            raise HTTPException(status_code=400, detail="waypoints は [lat, lon] の配列です。")
+        lat, lon = float(pair[0]), float(pair[1])
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise HTTPException(status_code=400, detail="緯度経度の範囲が不正です。")
+        waypoints.append((lat, lon))
+    return await asyncio.to_thread(sea_polyline, waypoints)
 
 
 @app.get("/api/health")
@@ -307,6 +363,38 @@ async def ai_chat(body: ChatBody, request: Request) -> dict:
     return await assistant_chat(body.message, context)
 
 
+@app.get("/api/docs")
+async def list_docs(request: Request) -> dict:
+    owner_id, persist = _doc_owner(request)
+    return {"docs": docs.list_docs(owner_id, persist), "persist": persist}
+
+
+@app.post("/api/docs")
+async def upload_doc(request: Request, file: UploadFile = File(...)) -> dict:
+    _enforce_ai_limit(request)
+    payload = await file.read()
+    try:
+        text = extract_text(file.filename or "upload.txt", payload)
+        chunks = chunk_text(text)
+        embeddings = await embed_texts(chunks)
+        owner_id, persist = _doc_owner(request)
+        doc = docs.add(owner_id, persist, filename=file.filename or "upload", chunks=chunks, embeddings=embeddings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("doc upload failed")
+        raise HTTPException(status_code=502, detail="資料のベクトル化に失敗しました。") from exc
+    return {"doc": doc, "persist": persist}
+
+
+@app.delete("/api/docs/{doc_id}")
+async def delete_doc(doc_id: str, request: Request) -> dict:
+    owner_id, persist = _doc_owner(request)
+    if not docs.delete(owner_id, persist, doc_id):
+        raise HTTPException(status_code=404, detail="資料が見つかりません。")
+    return {"ok": True}
+
+
 @app.websocket("/ws/ais")
 async def ws_ais(websocket: WebSocket) -> None:
     await websocket.accept()
@@ -370,6 +458,22 @@ def _ensure_guest(request: Request) -> str:
         guest_id = str(uuid.uuid4())
         request.session["guest_id"] = guest_id
     return guest_id
+
+
+def _doc_owner(request: Request) -> tuple[str, bool]:
+    uid = current_user_id(request)
+    if uid:
+        return uid, True
+    return f"guest-{_ensure_guest(request)}", False
+
+
+def _session_profile(request: Request) -> dict:
+    uid = current_user_id(request)
+    if uid:
+        user = users.get_by_id(uid)
+        if user:
+            return user
+    return public_profile(request.session.get("role"), request.session.get("company") or "")
 
 
 def _owner_store(request: Request):
@@ -475,8 +579,21 @@ async def _chat_context(body: ChatBody, request: Request) -> dict:
             "ais_eta": live.get("ais_eta") or (saved or {}).get("planned_arrival_at"),
             "in_port": live.get("in_port"),
         }
+    profile = _session_profile(request)
+    owner_id, persist = _doc_owner(request)
+    retrieved = []
+    try:
+        query_vec = (await embed_texts([body.message]))[:1]
+        if query_vec:
+            retrieved = docs.search(owner_id, persist, query_vec[0], limit=5)
+    except Exception:
+        logger.exception("doc search failed")
     return {
         "question": body.message,
+        "role": profile.get("role"),
+        "role_label": profile.get("role_label"),
+        "company": profile.get("company") or "",
+        "role_prompt": role_prompt(profile.get("role"), profile.get("company") or ""),
         "vessel": live,
         "bl": {
             "load": load,
@@ -487,4 +604,5 @@ async def _chat_context(body: ChatBody, request: Request) -> dict:
         "eta": eta,
         "weather": weathers,
         "delay": delay,
+        "documents": retrieved,
     }
