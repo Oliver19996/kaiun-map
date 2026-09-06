@@ -69,13 +69,13 @@
             <select id="ship-origin"><option value="">（未設定）</option></select>
           </label>
           <label class="field">積み替え地（B/L）
-            <select id="ship-transship" multiple size="3"><option value="">（未設定）</option></select>
+            <select id="ship-transship" multiple size="3"></select>
           </label>
           <label class="field">船卸港（B/L）
             <select id="ship-dest"><option value="">（未設定）</option></select>
           </label>
           <label class="field">寄港地（B/Lに無い寄港）
-            <select id="ship-call-port" multiple size="3"><option value="">（未設定）</option></select>
+            <select id="ship-call-port" multiple size="3"></select>
           </label>
           <label class="field">予定到着（港滞在の遅延算出に使用）
             <input id="ship-eta" type="datetime-local" />
@@ -111,7 +111,8 @@
         位置情報は AISStream。広域地図は Esri Ocean、拡大時は OpenStreetMap。天気は Open-Meteo。キーはサーバ側のみ。
       </footer>
     </aside>
-    <div id="map">
+    <div class="map-wrap">
+      <div id="map"></div>
       <div id="map-legend">
         <span><i class="leg here"></i>現在位置</span>
         <span><i class="leg load"></i>船積（B/L）</span>
