@@ -347,7 +347,8 @@ async function boot() {
   await loadPlaces();
   connect();
   loadProjects();
-  setTimeout(() => map.invalidateSize(), 50);
+  setTimeout(() => map.invalidateSize(), 80);
+  window.addEventListener("resize", () => map.invalidateSize());
 }
 
 async function logout() {
