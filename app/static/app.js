@@ -326,6 +326,76 @@ document.getElementById("ship-add").addEventListener("click", addShipToProject);
 document.getElementById("ship-add-selected").addEventListener("click", addSelectedToProject);
 document.getElementById("logout-btn").addEventListener("click", logout);
 
+function layoutStorage() {
+  try {
+    return JSON.parse(localStorage.getItem("kaiun-layout") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveLayout(patch) {
+  const next = { ...layoutStorage(), ...patch };
+  localStorage.setItem("kaiun-layout", JSON.stringify(next));
+}
+
+function applyLayoutVars(saved) {
+  const root = document.documentElement;
+  if (saved.chatWidth) root.style.setProperty("--chat-width", `${saved.chatWidth}px`);
+  if (saved.projectWidth) root.style.setProperty("--project-width", `${saved.projectWidth}px`);
+  if (saved.bottomHeight) root.style.setProperty("--bottom-height", `${saved.bottomHeight}px`);
+}
+
+function clamp(n, min, max) {
+  return Math.min(Math.max(n, min), max);
+}
+
+function bindSplitter(el, axis, onMove) {
+  if (!el) return;
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    document.body.classList.add(axis === "x" ? "is-resizing-col" : "is-resizing-row");
+    const move = (ev) => {
+      onMove(ev);
+      map.invalidateSize();
+    };
+    const stop = () => {
+      document.body.classList.remove("is-resizing-col", "is-resizing-row");
+      el.removeEventListener("pointermove", move);
+      map.invalidateSize();
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", stop, { once: true });
+    el.addEventListener("pointercancel", stop, { once: true });
+  });
+}
+
+function setupSplitters() {
+  if (window.matchMedia("(max-width: 960px)").matches) return;
+  const root = document.documentElement;
+  applyLayoutVars(layoutStorage());
+  bindSplitter(document.getElementById("split-chat"), "x", (e) => {
+    const width = clamp(window.innerWidth - e.clientX, 260, Math.max(280, window.innerWidth - 420));
+    root.style.setProperty("--chat-width", `${width}px`);
+    saveLayout({ chatWidth: Math.round(width) });
+  });
+  bindSplitter(document.getElementById("split-project"), "x", (e) => {
+    const panel = document.querySelector(".panel");
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const width = clamp(e.clientX - rect.left - 16, 220, Math.max(240, rect.width - 230));
+    root.style.setProperty("--project-width", `${width}px`);
+    saveLayout({ projectWidth: Math.round(width) });
+  });
+  bindSplitter(document.getElementById("split-bottom"), "y", (e) => {
+    const height = clamp(window.innerHeight - e.clientY, 180, Math.max(200, window.innerHeight - 220));
+    root.style.setProperty("--bottom-height", `${height}px`);
+    saveLayout({ bottomHeight: Math.round(height) });
+  });
+}
+
 async function boot() {
   const res = await fetch("/api/auth/me");
   const user = res.ok ? await res.json() : { guest: true };
@@ -349,6 +419,7 @@ async function boot() {
   loadProjects();
   setTimeout(() => map.invalidateSize(), 80);
   window.addEventListener("resize", () => map.invalidateSize());
+  setupSplitters();
 }
 
 async function logout() {
