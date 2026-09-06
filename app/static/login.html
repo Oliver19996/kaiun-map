@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ログイン — kaiun-map</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="auth-page">
+    <main class="auth-card">
+      <p class="kicker">Japan &amp; world shipping</p>
+      <h1>kaiun-map</h1>
+      <p class="lede">ログインするとプロジェクトが保存されます。未ログインでも地図は使えますが、作ったプロジェクトはブラウザを閉じると消えます。</p>
+      <p class="hint"><a href="/">ログインせず地図を見る</a></p>
+      <form id="auth-form">
+        <label class="field">ユーザーID
+          <input name="user_id" autocomplete="username" required minlength="3" maxlength="32" />
+        </label>
+        <label class="field">パスワード
+          <input name="password" type="password" autocomplete="current-password" required minlength="8" />
+        </label>
+        <p class="ai-note" id="auth-note"></p>
+        <div class="row">
+          <button type="submit" id="login-btn">ログイン</button>
+          <button type="button" class="ghost" id="register-btn">新規登録</button>
+        </div>
+      </form>
+    </main>
+    <script>
+      const note = document.getElementById("auth-note");
+      const form = document.getElementById("auth-form");
+      async function send(path) {
+        const body = Object.fromEntries(new FormData(form).entries());
+        note.textContent = "送信中…";
+        const res = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          note.textContent = data.detail || "失敗しました";
+          return;
+        }
+        location.href = "/";
+      }
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        send("/api/auth/login");
+      });
+      document.getElementById("register-btn").addEventListener("click", () => send("/api/auth/register"));
+    </script>
+  </body>
+</html>

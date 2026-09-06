@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
+from app.port import IN_PORT_SOG, UNDERWAY_SOG, containing_place, port_fields
+
 AIS_SHIP_TYPES: dict[int, str] = {
     30: "漁船",
     31: "曳航",
@@ -58,6 +60,8 @@ class Vessel:
     destination: str | None = None
     length_m: float | None = None
     width_m: float | None = None
+    in_port_since: datetime | None = None
+    ais_eta: str | None = None
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -75,7 +79,18 @@ class Vessel:
             "destination": (self.destination or "").strip() or None,
             "length_m": self.length_m,
             "width_m": self.width_m,
+            "ais_eta": self.ais_eta,
             "updated_at": self.updated_at.isoformat(),
+            **port_fields(
+                lat=self.lat,
+                lon=self.lon,
+                sog=self.sog,
+                in_port_since=self.in_port_since,
+                dest_place_id=None,
+                planned_arrival_at=None,
+                planned_departure_at=None,
+                ais_eta=self.ais_eta,
+            ),
         }
 
     def matches_query(self, query: str) -> bool:
@@ -119,6 +134,12 @@ class VesselStore:
             vessel.lon = lon
             if sog is not None:
                 vessel.sog = sog
+                now = datetime.now(timezone.utc)
+                if sog < IN_PORT_SOG and containing_place(lat, lon):
+                    if vessel.in_port_since is None:
+                        vessel.in_port_since = now
+                elif sog >= UNDERWAY_SOG:
+                    vessel.in_port_since = None
             if cog is not None:
                 vessel.cog = cog
             if heading is not None and 0 <= heading < 360:
@@ -138,6 +159,7 @@ class VesselStore:
         destination: str | None,
         length_m: float | None,
         width_m: float | None,
+        ais_eta: str | None = None,
     ) -> Vessel:
         with self._lock:
             vessel = self._vessels.get(mmsi) or Vessel(mmsi=mmsi)
@@ -153,6 +175,8 @@ class VesselStore:
                 vessel.length_m = length_m
             if width_m:
                 vessel.width_m = width_m
+            if ais_eta:
+                vessel.ais_eta = ais_eta
             vessel.updated_at = datetime.now(timezone.utc)
             self._vessels[mmsi] = vessel
             return vessel

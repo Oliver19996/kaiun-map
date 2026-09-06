@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import ssl
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import certifi
@@ -147,6 +148,7 @@ class AisHub:
                 destination=body.get("Destination"),
                 length_m=length or None,
                 width_m=width or None,
+                ais_eta=_parse_ais_eta(body.get("Eta")),
             )
             async with self._lock:
                 self._pending[mmsi] = vessel
@@ -222,6 +224,36 @@ async def _subscribe(ws: Any, bbox: tuple[float, float, float, float]) -> None:
         "FilterMessageTypes": ["PositionReport", "StandardClassBPositionReport", "ShipStaticData"],
     }
     await ws.send(json.dumps(payload))
+
+
+def _parse_ais_eta(eta: Any) -> str | None:
+    if not isinstance(eta, dict):
+        return None
+    try:
+        month = int(eta.get("Month") or 0)
+        day = int(eta.get("Day") or 0)
+        hour = int(eta.get("Hour") or 0)
+        minute = int(eta.get("Minute") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    hour = min(max(hour, 0), 23)
+    minute = min(max(minute, 0), 59)
+    now = datetime.now(timezone.utc)
+    year = now.year
+    try:
+        parsed = datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if parsed < now.replace(month=1, day=1):
+        return parsed.isoformat()
+    if parsed < now - timedelta(days=60):
+        try:
+            parsed = datetime(year + 1, month, day, hour, minute, tzinfo=timezone.utc)
+        except ValueError:
+            return parsed.isoformat()
+    return parsed.isoformat()
 
 
 def _maybe_float(value: Any) -> float | None:

@@ -221,10 +221,35 @@ button {
   border-bottom-color: #ffd36a;
 }
 
-.leaflet-popup-content-wrapper,
-.leaflet-popup-tip {
-  background: #102230;
-  color: var(--ink);
+.userbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.userbar a {
+  color: var(--accent, #3de0c5);
+  text-decoration: none;
+}
+
+body.auth-page {
+  display: grid;
+  place-items: center;
+  grid-template-columns: 1fr;
+}
+
+.auth-card {
+  width: min(420px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 @media (max-width: 800px) {

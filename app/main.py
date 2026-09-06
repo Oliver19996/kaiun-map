@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,13 +11,18 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.ais_client import AisHub, clip_bbox
 from app.ai import brief_vessel, interpret_search
 from app.config import settings
-from app.places import SHIP_TYPE_HINTS
+from app.guest import GuestProjectStore
+from app.places import SHIP_TYPE_HINTS, place_catalog_for_prompt
+from app.port import port_fields, parse_iso
 from app.projects import ProjectStore, ship_matches_live
 from app.rate_limit import RateLimiter
+from app.sample import SAMPLE_ID, sample_project, sample_summary
+from app.users import UserStore, current_user_id
 from app.vessel_store import VesselStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -25,6 +31,8 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 store = VesselStore()
 projects = ProjectStore()
+guests = GuestProjectStore()
+users = UserStore()
 hub = AisHub(store)
 limiter = RateLimiter(
     per_minute=settings.ai_requests_per_minute,
@@ -46,6 +54,13 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="kaiun-map", lifespan=lifespan)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret,
+    same_site="lax",
+    https_only=False,
+    max_age=None,
+)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -72,11 +87,72 @@ class ShipBody(BaseModel):
     call_sign: str = Field(default="", max_length=20)
     mmsi: int | None = None
     notes: str = Field(default="", max_length=300)
+    origin_place_id: str | None = None
+    dest_place_id: str | None = None
+    planned_arrival_at: str | None = None
+    planned_departure_at: str | None = None
+
+
+class AuthBody(BaseModel):
+    user_id: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=8, max_length=128)
 
 
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/login")
+async def login_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "login.html")
+
+
+@app.post("/api/auth/register")
+async def register(body: AuthBody, request: Request) -> dict:
+    try:
+        user = users.create(body.user_id, body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    request.session["uid"] = user["id"]
+    request.session["user_id"] = user["user_id"]
+    return user
+
+
+@app.post("/api/auth/login")
+async def login(body: AuthBody, request: Request) -> dict:
+    user = users.authenticate(body.user_id, body.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="ユーザーIDまたはパスワードが違います。")
+    request.session["uid"] = user["id"]
+    request.session["user_id"] = user["user_id"]
+    return user
+
+
+@app.post("/api/auth/logout")
+async def logout(request: Request) -> dict:
+    request.session.clear()
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def me(request: Request) -> dict:
+    uid = current_user_id(request)
+    if not uid:
+        _ensure_guest(request)
+        return {"guest": True, "user_id": None}
+    user = users.get_by_id(uid)
+    if user is None:
+        request.session.pop("uid", None)
+        request.session.pop("user_id", None)
+        _ensure_guest(request)
+        return {"guest": True, "user_id": None}
+    return {**user, "guest": False}
+
+
+@app.get("/api/places")
+async def places() -> dict:
+    return {"places": [p for p in place_catalog_for_prompt() if p["id"] != "japan"]}
 
 
 @app.get("/api/health")
@@ -114,30 +190,37 @@ async def ai_search(body: SearchBody, request: Request) -> dict:
 
 
 @app.get("/api/projects")
-async def list_projects() -> dict:
-    return {"projects": projects.list_projects()}
+async def list_projects(request: Request) -> dict:
+    owner_store, owner_id = _owner_store(request)
+    return {"projects": [sample_summary(), *owner_store.list_projects(owner_id)]}
 
 
 @app.post("/api/projects")
-async def create_project(body: ProjectBody) -> dict:
+async def create_project(body: ProjectBody, request: Request) -> dict:
+    owner_store, owner_id = _owner_store(request)
     try:
-        return projects.create(body.name, body.notes)
+        return owner_store.create(owner_id, body.name, body.notes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/projects/{project_id}")
-async def get_project(project_id: str) -> dict:
-    project = projects.get(project_id)
+async def get_project(project_id: str, request: Request) -> dict:
+    if project_id == SAMPLE_ID:
+        return _project_with_live(sample_project())
+    owner_store, owner_id = _owner_store(request)
+    project = owner_store.get(project_id, owner_id)
     if project is None:
         raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。")
     return _project_with_live(project)
 
 
 @app.patch("/api/projects/{project_id}")
-async def patch_project(project_id: str, body: ProjectPatchBody) -> dict:
+async def patch_project(project_id: str, body: ProjectPatchBody, request: Request) -> dict:
+    _forbid_sample(project_id)
+    owner_store, owner_id = _owner_store(request)
     try:
-        project = projects.update(project_id, body.name, body.notes)
+        project = owner_store.update(project_id, owner_id, body.name, body.notes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if project is None:
@@ -146,28 +229,34 @@ async def patch_project(project_id: str, body: ProjectPatchBody) -> dict:
 
 
 @app.delete("/api/projects/{project_id}")
-async def delete_project(project_id: str) -> dict:
-    if not projects.delete(project_id):
+async def delete_project(project_id: str, request: Request) -> dict:
+    _forbid_sample(project_id)
+    owner_store, owner_id = _owner_store(request)
+    if not owner_store.delete(project_id, owner_id):
         raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。")
     return {"ok": True}
 
 
 @app.post("/api/projects/{project_id}/ships")
-async def add_ship(project_id: str, body: ShipBody) -> dict:
+async def add_ship(project_id: str, body: ShipBody, request: Request) -> dict:
+    _forbid_sample(project_id)
+    owner_store, owner_id = _owner_store(request)
     try:
-        ship = projects.add_ship(project_id, body.model_dump())
+        ship = owner_store.add_ship(project_id, owner_id, body.model_dump())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    project = projects.get(project_id)
+    project = owner_store.get(project_id, owner_id)
     return {"ship": _live_ship(ship), "project": _project_with_live(project)}
 
 
 @app.patch("/api/projects/{project_id}/ships/{ship_id}")
-async def patch_ship(project_id: str, ship_id: str, body: ShipBody) -> dict:
+async def patch_ship(project_id: str, ship_id: str, body: ShipBody, request: Request) -> dict:
+    _forbid_sample(project_id)
+    owner_store, owner_id = _owner_store(request)
     try:
-        ship = projects.update_ship(project_id, ship_id, body.model_dump())
+        ship = owner_store.update_ship(project_id, ship_id, owner_id, body.model_dump())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。") from exc
     except ValueError as exc:
@@ -178,9 +267,11 @@ async def patch_ship(project_id: str, ship_id: str, body: ShipBody) -> dict:
 
 
 @app.delete("/api/projects/{project_id}/ships/{ship_id}")
-async def remove_ship(project_id: str, ship_id: str) -> dict:
+async def remove_ship(project_id: str, ship_id: str, request: Request) -> dict:
+    _forbid_sample(project_id)
+    owner_store, owner_id = _owner_store(request)
     try:
-        ok = projects.delete_ship(project_id, ship_id)
+        ok = owner_store.delete_ship(project_id, ship_id, owner_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="プロジェクトが見つかりません。") from exc
     if not ok:
@@ -251,6 +342,26 @@ def _snapshot_payload(min_lat: float, min_lon: float, max_lat: float, max_lon: f
     }
 
 
+def _ensure_guest(request: Request) -> str:
+    guest_id = request.session.get("guest_id")
+    if not guest_id:
+        guest_id = str(uuid.uuid4())
+        request.session["guest_id"] = guest_id
+    return guest_id
+
+
+def _owner_store(request: Request):
+    uid = current_user_id(request)
+    if uid:
+        return projects, uid
+    return guests, _ensure_guest(request)
+
+
+def _forbid_sample(project_id: str) -> None:
+    if project_id == SAMPLE_ID:
+        raise HTTPException(status_code=403, detail="サンプルプロジェクトは変更できません。")
+
+
 def _enforce_ai_limit(request: Request) -> None:
     ip = request.client.host if request.client else "unknown"
     ok, reason = limiter.allow(ip)
@@ -259,17 +370,32 @@ def _enforce_ai_limit(request: Request) -> None:
 
 
 def _live_ship(saved: dict) -> dict:
+    live = None
     if saved.get("mmsi"):
         vessel = store.get(int(saved["mmsi"]))
         if vessel:
-            return {**saved, "live": vessel.to_public_dict()}
-    query = saved.get("call_sign") or saved.get("name") or ""
-    if query:
-        for vessel in store.search(query, limit=30):
-            public = vessel.to_public_dict()
-            if ship_matches_live(saved, public):
-                return {**saved, "live": public}
-    return {**saved, "live": None}
+            live = vessel.to_public_dict()
+    if live is None:
+        query = saved.get("call_sign") or saved.get("name") or ""
+        if query:
+            for vessel in store.search(query, limit=30):
+                public = vessel.to_public_dict()
+                if ship_matches_live(saved, public):
+                    live = public
+                    break
+    if live:
+        extra = port_fields(
+            lat=live.get("lat"),
+            lon=live.get("lon"),
+            sog=live.get("sog"),
+            in_port_since=parse_iso(live.get("in_port_since")),
+            dest_place_id=saved.get("dest_place_id"),
+            planned_arrival_at=saved.get("planned_arrival_at"),
+            planned_departure_at=saved.get("planned_departure_at"),
+            ais_eta=live.get("ais_eta"),
+        )
+        live = {**live, **extra}
+    return {**saved, "live": live}
 
 
 def _project_with_live(project: dict | None) -> dict:

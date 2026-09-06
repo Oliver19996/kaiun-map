@@ -5,10 +5,13 @@ let selectedVessel = null;
 let highlightFilter = null;
 let sendBboxTimer = null;
 let socket;
-let currentProjectId = localStorage.getItem("kaiun-project") || "";
+const storedProject = localStorage.getItem("kaiun-project");
+let currentProjectId = storedProject === null ? "sample" : storedProject;
 let currentProject = null;
+let isGuest = true;
 
 const map = L.map("map", { worldCopyJump: true, minZoom: 3, maxZoom: 16 }).setView(JAPAN, 6);
+const routeLayer = L.layerGroup().addTo(map);
 L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}", {
   attribution: "Tiles &copy; Esri | &copy; OpenStreetMap | AIS: AISStream",
   maxNativeZoom: 10,
@@ -45,13 +48,24 @@ function shipIcon(heading, selected, inProject) {
 
 function popupHtml(v) {
   const name = v.name || "船名未着（静的AIS待ち）";
-  const updated = v.updated_at ? new Date(v.updated_at).toLocaleString("ja-JP") : "不明";
+    const updated = v.updated_at ? new Date(v.updated_at).toLocaleString("ja-JP") : "不明";
+  let port = "";
+  if (v.in_port) {
+    const since = v.in_port_since ? new Date(v.in_port_since).toLocaleString("ja-JP") : "不明";
+    port = `<br>港滞在: ${escapeHtml(v.port_name || "港内")} / ${since} から ${v.stay_hours ?? "—"} 時間`;
+    if (v.delay_hours != null) {
+      port += `<br>遅延: ${v.delay_hours} 時間`;
+    }
+    if (v.delay_reason) {
+      port += `<br>${escapeHtml(v.delay_reason)}`;
+    }
+  }
   return `
     <strong>${escapeHtml(name)}</strong><br>
     MMSI ${v.mmsi}<br>
     速力 ${fmt(v.sog)} kn / 針路 ${fmt(v.cog)}°<br>
     船種 ${escapeHtml(v.ship_type_label || "不明")}<br>
-    最終更新 ${escapeHtml(updated)}
+    最終更新 ${escapeHtml(updated)}${port}
   `;
 }
 
@@ -297,8 +311,7 @@ async function runBrief() {
   `;
 }
 
-connect();
-loadProjects();
+boot();
 
 document.getElementById("project-create").addEventListener("click", createProject);
 document.getElementById("project-name").addEventListener("keydown", (e) => {
@@ -312,6 +325,71 @@ document.getElementById("project-select").addEventListener("change", (e) => {
 document.getElementById("project-delete").addEventListener("click", deleteCurrentProject);
 document.getElementById("ship-add").addEventListener("click", addShipToProject);
 document.getElementById("ship-add-selected").addEventListener("click", addSelectedToProject);
+document.getElementById("logout-btn").addEventListener("click", logout);
+
+async function boot() {
+  const res = await fetch("/api/auth/me");
+  const user = res.ok ? await res.json() : { guest: true };
+  isGuest = Boolean(user.guest);
+  const who = document.getElementById("whoami");
+  const logoutBtn = document.getElementById("logout-btn");
+  const loginLink = document.getElementById("login-link");
+  if (isGuest) {
+    who.textContent = "ゲスト";
+    logoutBtn.hidden = true;
+    loginLink.hidden = false;
+  } else {
+    who.textContent = user.user_id;
+    logoutBtn.hidden = false;
+    loginLink.hidden = true;
+  }
+  await loadPlaces();
+  connect();
+  loadProjects();
+}
+
+async function logout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  location.href = "/";
+}
+
+async function loadPlaces() {
+  const res = await fetch("/api/places");
+  if (!res.ok) return;
+  const data = await res.json();
+  ["ship-origin", "ship-dest"].forEach((id) => {
+    const select = document.getElementById(id);
+    (data.places || []).forEach((place) => {
+      const option = document.createElement("option");
+      option.value = place.id;
+      option.textContent = place.name;
+      select.appendChild(option);
+    });
+  });
+}
+
+function drawRoutes() {
+  routeLayer.clearLayers();
+  if (!currentProject) return;
+  (currentProject.ships || []).forEach((ship) => {
+    if (ship.origin_lat == null || ship.dest_lat == null) return;
+    L.polyline(
+      [
+        [ship.origin_lat, ship.origin_lon],
+        [ship.dest_lat, ship.dest_lon],
+      ],
+      { color: "#ffb020", weight: 2, dashArray: "6 6" }
+    )
+      .bindPopup(`${escapeHtml(ship.name || "航路")}<br>${escapeHtml(ship.origin_name || "出発")} → ${escapeHtml(ship.dest_name || "行き先")}`)
+      .addTo(routeLayer);
+    L.circleMarker([ship.origin_lat, ship.origin_lon], { radius: 5, color: "#3de0c5", fillOpacity: 0.9 })
+      .bindTooltip(`出発 ${ship.origin_name || ""}`)
+      .addTo(routeLayer);
+    L.circleMarker([ship.dest_lat, ship.dest_lon], { radius: 5, color: "#ffb020", fillOpacity: 0.9 })
+      .bindTooltip(`行き先 ${ship.dest_name || ""}`)
+      .addTo(routeLayer);
+  });
+}
 
 function projectNote(text) {
   document.getElementById("project-note").textContent = text || "";
@@ -346,6 +424,10 @@ async function loadProjects() {
   if (previous && [...select.options].some((opt) => opt.value === previous)) {
     select.value = previous;
     currentProjectId = previous;
+  } else if ([...select.options].some((opt) => opt.value === "sample")) {
+    select.value = "sample";
+    currentProjectId = "sample";
+    localStorage.setItem("kaiun-project", "sample");
   } else {
     currentProjectId = "";
     localStorage.setItem("kaiun-project", "");
@@ -356,11 +438,14 @@ async function loadProjects() {
 async function loadCurrentProject() {
   const fleet = document.getElementById("fleet");
   const del = document.getElementById("project-delete");
+  const form = document.getElementById("fleet-form");
   if (!currentProjectId) {
     currentProject = null;
     fleet.hidden = true;
     del.hidden = true;
-    projectNote("");
+    form.hidden = true;
+    projectNote(isGuest ? "未ログインの作成分は、ブラウザを閉じると消えます。" : "");
+    drawRoutes();
     refreshMapFilter();
     return;
   }
@@ -369,15 +454,24 @@ async function loadCurrentProject() {
     currentProject = null;
     fleet.hidden = true;
     del.hidden = true;
+    form.hidden = true;
     projectNote("プロジェクトを読み込めませんでした。");
     return;
   }
   currentProject = await res.json();
+  const readonly = Boolean(currentProject.readonly);
   fleet.hidden = false;
-  del.hidden = false;
+  del.hidden = readonly;
+  form.hidden = readonly;
   renderFleet();
+  drawRoutes();
   refreshMapFilter();
   fitProjectShips();
+  if (readonly) {
+    projectNote("サンプル（3隻）です。変更・削除はできません。");
+  } else if (isGuest) {
+    projectNote("未ログインの作成分は、ブラウザを閉じると消えます。");
+  }
 }
 
 function renderFleet() {
@@ -402,6 +496,10 @@ function renderFleet() {
       ship.mmsi ? `MMSI ${ship.mmsi}` : "",
       live ? "地図上" : "未検出",
     ].filter(Boolean);
+    if (live?.in_port) {
+      parts.push(`港 ${live.port_name || ""} ${live.stay_hours ?? "—"}h`);
+      if (live.delay_hours != null) parts.push(`遅延 ${live.delay_hours}h`);
+    }
     meta.textContent = parts.join(" · ");
     if (ship.notes) {
       meta.textContent += ` / ${ship.notes}`;
@@ -416,10 +514,14 @@ function renderFleet() {
     remove.type = "button";
     remove.className = "remove";
     remove.textContent = "外す";
-    remove.addEventListener("click", (event) => {
-      event.stopPropagation();
-      removeShip(ship.id);
-    });
+    if (currentProject?.readonly) {
+      remove.hidden = true;
+    } else {
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        removeShip(ship.id);
+      });
+    }
     li.append(meta, remove);
     list.appendChild(li);
   });
@@ -434,10 +536,12 @@ function refreshMapFilter() {
 }
 
 function fitProjectShips() {
-  const points = (currentProject?.ships || [])
-    .map((ship) => ship.live)
-    .filter((live) => live && live.lat != null && live.lon != null)
-    .map((live) => [live.lat, live.lon]);
+  const points = [];
+  (currentProject?.ships || []).forEach((ship) => {
+    if (ship.live && ship.live.lat != null) points.push([ship.live.lat, ship.live.lon]);
+    if (ship.origin_lat != null) points.push([ship.origin_lat, ship.origin_lon]);
+    if (ship.dest_lat != null) points.push([ship.dest_lat, ship.dest_lon]);
+  });
   if (points.length === 1) {
     map.setView(points[0], 9);
   } else if (points.length > 1) {
@@ -489,6 +593,10 @@ async function addShipToProject() {
     name: document.getElementById("ship-name").value.trim(),
     call_sign: document.getElementById("ship-call").value.trim(),
     notes: document.getElementById("ship-notes").value.trim(),
+    origin_place_id: document.getElementById("ship-origin").value || null,
+    dest_place_id: document.getElementById("ship-dest").value || null,
+    planned_arrival_at: document.getElementById("ship-eta").value || null,
+    planned_departure_at: document.getElementById("ship-etd").value || null,
   };
   const mmsi = document.getElementById("ship-mmsi").value.trim();
   if (mmsi) body.mmsi = Number(mmsi);
@@ -506,6 +614,10 @@ async function addShipToProject() {
   document.getElementById("ship-call").value = "";
   document.getElementById("ship-mmsi").value = "";
   document.getElementById("ship-notes").value = "";
+  document.getElementById("ship-origin").value = "";
+  document.getElementById("ship-dest").value = "";
+  document.getElementById("ship-eta").value = "";
+  document.getElementById("ship-etd").value = "";
   currentProject = data.project;
   projectNote("船を登録しました。");
   await loadProjects();
@@ -527,6 +639,10 @@ async function addSelectedToProject() {
       name: selectedVessel.name || "",
       call_sign: selectedVessel.call_sign || "",
       mmsi: selectedVessel.mmsi,
+      origin_place_id: document.getElementById("ship-origin").value || null,
+      dest_place_id: document.getElementById("ship-dest").value || null,
+      planned_arrival_at: document.getElementById("ship-eta").value || null,
+      planned_departure_at: document.getElementById("ship-etd").value || null,
     }),
   });
   const data = await res.json();

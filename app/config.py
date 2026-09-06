@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     openai_max_tokens: int = 400
     daily_ai_request_limit: int = 200
     ai_requests_per_minute: int = 10
+    session_secret: str = "dev-change-SESSION_SECRET"
 
 
 settings = Settings()

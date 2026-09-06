@@ -20,13 +20,20 @@
         <p class="lede">
           地図に映っている範囲の AIS をほぼリアルタイムで表示します。欠測や遅延があり、公式の運航情報ではありません。
         </p>
+        <div class="userbar">
+          <span id="whoami"></span>
+          <a id="login-link" href="/login">ログイン</a>
+          <button id="logout-btn" class="ghost" type="button" hidden>ログアウト</button>
+        </div>
       </header>
 
       <div class="status" id="status">接続中…</div>
 
       <section class="project-box">
         <h2>プロジェクト</h2>
-        <p class="hint">船団やウォッチリストを作って、船名・呼出符号・MMSI をまとめて管理します。</p>
+        <p class="hint">
+          船団やウォッチリストを作って、船名・呼出符号・MMSI をまとめて管理します。サンプルは常に3隻です。未ログインで作ったプロジェクトは、ブラウザを閉じると消えます。
+        </p>
         <label class="field">
           選択中
           <select id="project-select">
@@ -45,6 +52,7 @@
         <div id="fleet" hidden>
           <h2>登録船</h2>
           <ul id="fleet-list" class="results fleet-list"></ul>
+          <div id="fleet-form">
           <label class="field">船名
             <input id="ship-name" type="text" placeholder="例: SUNRISE MARU" />
           </label>
@@ -57,9 +65,22 @@
           <label class="field">メモ
             <input id="ship-notes" type="text" placeholder="任意" />
           </label>
+          <label class="field">出発地点
+            <select id="ship-origin"><option value="">（未設定）</option></select>
+          </label>
+          <label class="field">行き先
+            <select id="ship-dest"><option value="">（未設定）</option></select>
+          </label>
+          <label class="field">予定到着（港滞在の遅延算出に使用）
+            <input id="ship-eta" type="datetime-local" />
+          </label>
+          <label class="field">予定出港
+            <input id="ship-etd" type="datetime-local" />
+          </label>
           <div class="row">
             <button id="ship-add" type="button">船を追加</button>
             <button id="ship-add-selected" class="ghost" type="button">選択中のAIS船を追加</button>
+          </div>
           </div>
         </div>
       </section>
